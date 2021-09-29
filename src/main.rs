@@ -1,83 +1,41 @@
-use async_std::path::{Component, Path, PathBuf};
-use std::{env, io};
-use tide::{Body, Request, Response, StatusCode};
+mod locate;
+mod serve;
+mod state;
 
-fn normalize(path: &str) -> PathBuf {
-    let mut path_buf = PathBuf::new();
-    for component in Path::new(path).components() {
-        if let Component::Normal(name) = component {
-            path_buf.push(name);
-        } else if component == Component::ParentDir {
-            path_buf.pop();
-        }
-    }
-    return path_buf;
-}
+use std::convert::TryFrom;
+use std::env;
 
-enum PathType<'a> {
-    File(&'a Path),
-    Directory(&'a Path),
-    NotFound(&'a Path),
-}
+use crate::locate::locate;
+use crate::serve::serve;
+use crate::state::State;
 
-impl<'a> PathType<'a> {
-    async fn from_path(path: &'a Path) -> io::Result<PathType<'a>> {
-        match path.metadata().await {
-            Ok(metadata) => {
-                if metadata.is_file() {
-                    Ok(PathType::File(path))
-                } else if metadata.is_dir() {
-                    Ok(PathType::Directory(path))
-                } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "Unknown path type"))
-                }
-            }
-            Err(e) => {
-                if e.kind() == io::ErrorKind::NotFound {
-                    Ok(PathType::NotFound(path))
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
-}
-
-async fn endpoint(request: Request<()>) -> tide::Result {
-    async fn serve(path: &Path) -> tide::Result {
-        let body = Body::from_file(path).await?;
-        return Ok(Response::from(body));
-    }
-    match PathType::from_path(normalize(request.url().path()).as_path()).await? {
-        PathType::File(path) => serve(path).await,
-        PathType::Directory(path) => {
-            match PathType::from_path(path.join("index.html").as_path()).await? {
-                PathType::File(path) => serve(path).await,
-                PathType::NotFound(_) => {
-                    match PathType::from_path(path.join("index.hbs").as_path()).await? {
-                        PathType::File(path) => serve(path).await,
-                        _ => Ok(Response::new(StatusCode::NotFound)),
-                    }
-                }
-                _ => Ok(Response::new(StatusCode::NotFound)),
-            }
-        }
-        _ => Ok(Response::new(StatusCode::NotFound)),
-    }
+async fn endpoint(request: tide::Request<State>) -> tide::Result {
+    let path = locate(&request).await?;
+    serve(&request, path).await
 }
 
 #[async_std::main]
-async fn main() -> io::Result<()> {
+async fn main() -> anyhow::Result<()> {
+    let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = env::var("PORT").map_or(Ok(0u16), |port| port.parse())?;
+    let base_url = env::var("BASE_URL").map_or_else(
+        |_| surf::Url::parse("https://httpbin.org/"),
+        |url| url.parse(),
+    )?;
+
     tide::log::start();
 
-    let mut app = tide::Server::new();
+    let handlebars = handlebars::Handlebars::new();
+    let client = surf::Client::try_from(surf::Config::new().set_base_url(base_url))?
+        .with(surf::middleware::Logger::new());
+
+    let mut app = tide::Server::with_state(State { handlebars, client });
     app.with(tide::log::LogMiddleware::new());
 
     app.at("").get(endpoint);
     app.at("*").get(endpoint);
 
-    let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
-    let port = env::var("PORT").map_or(0u16, |port| port.parse().unwrap());
+    app.listen((host, port)).await?;
 
-    app.listen((host, port)).await
+    Ok(())
 }
