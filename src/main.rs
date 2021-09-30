@@ -31,10 +31,8 @@ async fn main() -> anyhow::Result<()> {
 
     let mut app = tide::Server::with_state(State { handlebars, client });
     app.with(tide::log::LogMiddleware::new());
-
     app.at("").get(endpoint);
     app.at("*").get(endpoint);
-
     app.listen((host, port)).await?;
 
     Ok(())

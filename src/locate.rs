@@ -22,21 +22,19 @@ pub(crate) async fn locate<T>(request: &Request<T>) -> tide::Result<PathBuf> {
         Ok(metadata) if metadata.is_file() => Ok(buf),
         Ok(metadata) if metadata.is_dir() => {
             buf.push("index.html");
-            match buf.metadata().await {
-                Ok(metadata) if metadata.is_file() => Ok(buf),
-                _ => {
-                    buf.set_file_name("index.hbs");
-                    match buf.metadata().await {
-                        Ok(metadata) if metadata.is_file() => Ok(buf),
-                        _ => Err(tide::Error::from_str(
-                            StatusCode::Forbidden,
-                            "Cannot load index file",
-                        )),
-                    }
-                }
+            if matches!(buf.metadata().await, Ok(metadata) if metadata.is_file()) {
+                return Ok(buf);
             }
+            buf.set_file_name("index.hbs");
+            if matches!(buf.metadata().await, Ok(metadata) if metadata.is_file()) {
+                return Ok(buf);
+            }
+            Err(tide::Error::from_str(
+                StatusCode::Forbidden,
+                "Cannot load index file",
+            ))
         }
-        Ok(_) => Err(tide::Error::from_str(
+        Ok(_metadata) => Err(tide::Error::from_str(
             StatusCode::NotFound,
             "Unsupported type",
         )),
