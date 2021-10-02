@@ -1,11 +1,12 @@
 use std::ffi::OsStr;
 
-use async_std::{fs, path::PathBuf};
+use async_std::fs;
+use async_std::path::Path;
 use tide::{http::mime, Body, Request, Response, StatusCode};
 
 use crate::State;
 
-pub(crate) async fn serve(request: &Request<State>, path: PathBuf) -> tide::Result {
+pub(crate) async fn serve(request: &Request<State>, path: &Path) -> tide::Result {
     if path.extension().and_then(OsStr::to_str) == Some("hbs") {
         let State { handlebars, client } = request.state();
 

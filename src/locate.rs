@@ -1,33 +1,18 @@
-use async_std::{
-    io,
-    path::{Component, Path, PathBuf},
-};
-use tide::{prelude::*, Request, StatusCode};
+use async_std::io;
+use async_std::path::{Path, PathBuf};
+use tide::{prelude::*, StatusCode};
 
-fn normalize(path: &Path) -> PathBuf {
-    let mut path_buf = PathBuf::new();
-    for component in path.components() {
-        if let Component::Normal(name) = component {
-            path_buf.push(name);
-        } else if component == Component::ParentDir {
-            path_buf.pop();
-        }
-    }
-    path_buf
-}
-
-pub(crate) async fn locate<T>(request: &Request<T>) -> tide::Result<PathBuf> {
-    let mut buf = normalize(Path::new(request.url().path()));
-    match buf.metadata().await {
-        Ok(metadata) if metadata.is_file() => Ok(buf),
+pub(crate) async fn locate(path: &Path) -> tide::Result<PathBuf> {
+    match path.metadata().await {
+        Ok(metadata) if metadata.is_file() => Ok(path.to_path_buf()),
         Ok(metadata) if metadata.is_dir() => {
-            buf.push("index.html");
-            if matches!(buf.metadata().await, Ok(metadata) if metadata.is_file()) {
-                return Ok(buf);
+            let path_buf = path.join("index.html");
+            if path_buf.is_file().await {
+                return Ok(path_buf);
             }
-            buf.set_file_name("index.hbs");
-            if matches!(buf.metadata().await, Ok(metadata) if metadata.is_file()) {
-                return Ok(buf);
+            let path_buf = path.join("index.hbs");
+            if path_buf.is_file().await {
+                return Ok(path_buf);
             }
             Err(tide::Error::from_str(
                 StatusCode::Forbidden,
